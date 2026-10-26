@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dango - Gin + Vue 任务管理 Demo</title>
+  <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/axios@1.6.8/dist/axios.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f1f5f9; color: #1e293b; }
+    #app { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 { font-size: 28px; }
+    header h1 span { color: #00ADD8; }
+    header p { color: #64748b; margin-top: 6px; font-size: 14px; }
+    header p a { color: #00ADD8; text-decoration: none; }
+    .stats { display: flex; gap: 12px; margin-bottom: 16px; }
+    .stat { flex: 1; background: #fff; border-radius: 12px; padding: 14px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .stat b { display: block; font-size: 24px; }
+    .stat small { color: #64748b; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
+    .add-row { display: flex; gap: 8px; }
+    input[type=text] { flex: 1; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; outline: none; }
+    input[type=text]:focus { border-color: #00ADD8; }
+    button { padding: 10px 16px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+    .btn-primary { background: #00ADD8; color: #fff; }
+    .btn-primary:hover { background: #0095b8; }
+    .btn-danger { background: #fee2e2; color: #dc2626; padding: 6px 10px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .toolbar input { max-width: 220px; }
+    .tab { background: #e2e8f0; color: #475569; }
+    .tab.active { background: #0f172a; color: #fff; }
+    ul.tasks { list-style: none; }
+    ul.tasks li { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-top: 1px solid #f1f5f9; }
+    ul.tasks li:first-child { border-top: none; }
+    ul.tasks li.done .title { text-decoration: line-through; color: #94a3b8; }
+    .title { flex: 1; word-break: break-all; }
+    .title-edit { flex: 1; }
+    .meta { font-size: 12px; color: #94a3b8; }
+    .empty { text-align: center; color: #94a3b8; padding: 24px 0; }
+    .health { text-align: center; font-size: 12px; color: #94a3b8; margin-top: 16px; }
+    .health .ok { color: #16a34a; }
+    .health .bad { color: #dc2626; }
+    input[type=checkbox] { width: 18px; height: 18px; accent-color: #00ADD8; cursor: pointer; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🥟 Dango <span>Gin + Vue</span></h1>
+    <p>后端 Gin · 前端 Vue 3 · 数据存内存（重启会重置）· 源码 <a href="https://github.com/dan-ai-studio/dango" target="_blank">dan-ai-studio/dango</a></p>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><b>{{ stats.total }}</b><small>全部</small></div>
+    <div class="stat"><b>{{ stats.pending }}</b><small>待办</small></div>
+    <div class="stat"><b>{{ stats.done }}</b><small>已完成</small></div>
+  </div>
+
+  <div class="card">
+    <div class="add-row">
+      <input type="text" v-model="newTitle" @keyup.enter="addTask" placeholder="输入新任务，回车添加…">
+      <button class="btn-primary" @click="addTask">添加</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <button class="tab" :class="{active: filter==='all'}" @click="filter='all'">全部</button>
+      <button class="tab" :class="{active: filter==='pending'}" @click="filter='pending'">待办</button>
+      <button class="tab" :class="{active: filter==='done'}" @click="filter='done'">已完成</button>
+      <input type="text" v-model="q" @input="fetchTasks" placeholder="搜索任务…">
+    </div>
+    <ul class="tasks" v-if="tasks.length">
+      <li v-for="t in tasks" :key="t.id" :class="{done: t.done}">
+        <input type="checkbox" :checked="t.done" @change="toggle(t)">
+        <span class="title" v-if="editingId !== t.id" @dblclick="startEdit(t)">{{ t.title }}</span>
+        <input class="title-edit" v-else type="text" v-model="editingTitle"
+               @keyup.enter="saveEdit(t)" @blur="saveEdit(t)" v-focus>
+        <span class="meta">#{{ t.id }}</span>
+        <button class="btn-danger" @click="remove(t)">删除</button>
+      </li>
+    </ul>
+    <div class="empty" v-else>暂无任务，加一条试试～</div>
+  </div>
+
+  <div class="health">
+    后端状态：<span :class="healthOk ? 'ok' : 'bad'">{{ healthText }}</span>
+    · 双击任务标题可重命名
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+createApp({
+  data() {
+    return {
+      tasks: [], stats: { total: 0, done: 0, pending: 0 },
+      newTitle: '', q: '', filter: 'all',
+      editingId: null, editingTitle: '',
+      healthOk: false, healthText: '检测中…'
+    };
+  },
+  directives: { focus: { mounted(el) { el.focus(); } } },
+  mounted() { this.fetchTasks(); this.fetchStats(); this.checkHealth(); },
+  watch: { filter() { this.fetchTasks(); } },
+  methods: {
+    async checkHealth() {
+      try { const r = await axios.get('/api/health'); this.healthOk = r.data.status === 'ok'; this.healthText = this.healthOk ? '正常' : '异常'; }
+      catch (e) { this.healthOk = false; this.healthText = '连接失败'; }
+    },
+    async fetchStats() {
+      try { const r = await axios.get('/api/stats'); this.stats = r.data; } catch (e) {}
+    },
+    async fetchTasks() {
+      const params = {};
+      if (this.q) params.q = this.q;
+      if (this.filter === 'done') params.done = true;
+      if (this.filter === 'pending') params.done = false;
+      const r = await axios.get('/api/tasks', { params });
+      this.tasks = r.data.items || [];
+      this.fetchStats();
+    },
+    async addTask() {
+      const title = this.newTitle.trim();
+      if (!title) return;
+      await axios.post('/api/tasks', { title });
+      this.newTitle = '';
+      this.fetchTasks();
+    },
+    async toggle(t) {
+      await axios.patch(`/api/tasks/${t.id}/toggle`);
+      this.fetchTasks();
+    },
+    startEdit(t) { this.editingId = t.id; this.editingTitle = t.title; },
+    async saveEdit(t) {
+      if (this.editingId !== t.id) return;
+      const title = this.editingTitle.trim();
+      this.editingId = null;
+      if (title && title !== t.title) {
+        await axios.put(`/api/tasks/${t.id}`, { title });
+        this.fetchTasks();
+      }
+    },
+    async remove(t) {
+      if (!confirm(`删除「${t.title}」？`)) return;
+      await axios.delete(`/api/tasks/${t.id}`);
+      this.fetchTasks();
+    }
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
