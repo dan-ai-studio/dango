@@ -32,9 +32,22 @@ func New() *gin.Engine {
 	store := NewStore()
 
 	// 首页：Vue 应用（embed 打进二进制，Vercel 也能用）
-	r.GET("/", func(c *gin.Context) {
+	serveHome := func(c *gin.Context) {
 		data, _ := frontendFS.ReadFile("web/index.html")
 		c.Data(http.StatusOK, "text/html; charset=utf-8", data)
+	}
+	r.GET("/", serveHome)
+	// Vercel rewrite 兜底：转发后函数看到的路径可能是 /api/index 本身
+	r.GET("/api/index", serveHome)
+
+	// 兜底：未知路径——/api/* 返回 JSON 404，其他返回首页
+	r.NoRoute(func(c *gin.Context) {
+		p := c.Request.URL.Path
+		if len(p) >= 4 && p[:4] == "/api" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		serveHome(c)
 	})
 
 	// 健康检查
